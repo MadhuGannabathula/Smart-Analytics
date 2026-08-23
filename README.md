@@ -1,64 +1,31 @@
 # SmartAnalytics
 
-AI-driven analytics dashboard for CSV and Excel uploads. Uses DuckDB for in-memory querying and Groq for LLM-generated insights and chat Q&A.
+Upload your spreadsheets and get an AI-generated dashboard plus a chat assistant that answers questions about your data.
 
-## Local setup
+## Get started
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env and set GROQ_API_KEY
-streamlit run app.py
-```
+1. Open the app in your browser.
+2. In the sidebar, upload one or more **CSV** or **Excel** (.xlsx) files.
+3. Wait a few seconds — the dashboard will populate automatically.
 
-Open http://localhost:8501
+## Using the dashboard
 
-## Deploy to Streamlit Community Cloud
+- **Dashboard** tab — charts and metrics generated from your data (totals, trends, comparisons, and more).
+- **Raw Data** tab — browse the uploaded tables directly.
+- **Generate more insights** — add more charts to the dashboard.
+- **＋ New Analysis** — clear everything and start over with new files.
 
-Repo: [github.com/MadhuGannabathula/Smart-Analytics](https://github.com/MadhuGannabathula/Smart-Analytics)
+## Chat
 
-### 1. Push code to GitHub
+Use the chat panel in the sidebar to ask questions about your data, for example:
 
-```bash
-git init
-git add .
-git commit -m "Initial SmartAnalytics app"
-git branch -M main
-git remote add origin https://github.com/MadhuGannabathula/Smart-Analytics.git
-git push -u origin main
-```
+- *"What was total revenue last quarter?"*
+- *"Show sign-ups by region as a bar chart"*
 
-### 2. Create the app on Streamlit Cloud
+If the assistant returns a chart, click **➕ Add to dashboard** to pin it to the main view.
 
-1. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
-2. Click **New app**.
-3. Select repository **MadhuGannabathula/Smart-Analytics**.
-4. Set **Main file path** to `app.py`.
-5. Click **Advanced settings** → **Secrets** and paste:
+## Tips
 
-```toml
-GROQ_API_KEY = "your_groq_api_key_here"
-GROQ_MODEL = "openai/gpt-oss-120b"
-LLM_TEMPERATURE = "0"
-```
-
-6. Click **Deploy**.
-
-Your app will be live at a URL like `https://smart-analytics-xxxxx.streamlit.app`.
-
-## Usage
-
-1. Upload one or more **CSV** or **Excel** files in the sidebar.
-2. The main dashboard auto-generates insights from your data.
-3. Ask follow-up questions in the sidebar chat.
-4. Use **➕ Add to dashboard** to pin chat charts to the main view.
-
-## Architecture
-
-| Module | Role |
-|--------|------|
-| `data_layer.py` | Parse uploads, validate, register DuckDB tables, build schema profiles |
-| `llm.py` | Groq client, insight suggestions, chat Q&A, SQL validation & retry |
-| `charts.py` | Plotly rendering with the sky-blue theme |
-| `config.py` | Reads settings from `.env` (local) or Streamlit secrets (cloud) |
-| `app.py` | Streamlit UI — sidebar upload/chat, main dashboard |
+- You can upload multiple files at once. Excel files with multiple sheets are supported.
+- If a file has issues (empty rows, duplicate columns), a warning badge appears next to the file name — the app will still try to use the data.
+- Keep questions specific for the best answers.
