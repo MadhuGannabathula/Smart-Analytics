@@ -8,6 +8,7 @@ Run:
 from __future__ import annotations
 
 import copy
+import importlib
 import uuid
 
 import streamlit as st
@@ -21,7 +22,12 @@ from data_layer import (
     parse_upload,
     register_table,
 )
-from llm import answer_question, get_client, sanitize_chat_input, suggest_insights
+import llm
+
+importlib.reload(llm)
+answer_question = llm.answer_question
+get_client = llm.get_client
+suggest_insights = llm.suggest_insights
 
 load_dotenv()
 
@@ -171,6 +177,19 @@ def _generate_more_insights(initial: bool = False) -> None:
         st.error(f"Could not generate insights: {exc}")
 
 
+def _remove_insights_from_dashboard(insight_ids: list[str]) -> None:
+    if not insight_ids:
+        return
+    remove_set = set(insight_ids)
+    st.session_state.insights = [
+        insight for insight in st.session_state.insights if insight.get("id") not in remove_set
+    ]
+    for msg in st.session_state.messages:
+        chart = msg.get("chart") or {}
+        if chart.get("id") in remove_set:
+            msg["on_dashboard"] = False
+
+
 def _add_chart_to_dashboard(chart: dict, msg: dict) -> None:
     insight = copy.deepcopy(chart)
     insight["id"] = uuid.uuid4().hex[:10]
@@ -241,32 +260,41 @@ def _render_sidebar() -> None:
                     {"role": "ai", "text": "Please upload a CSV or Excel file first."}
                 )
             else:
-                cleaned, input_error = sanitize_chat_input(prompt)
-                st.session_state.messages.append({"role": "user", "text": cleaned or prompt})
-                if input_error:
-                    st.session_state.messages.append({"role": "ai", "text": input_error})
-                else:
-                    try:
-                        client = get_client()
-                        history = [(m["role"], m["text"]) for m in st.session_state.messages[:-1]]
-                        with st.spinner("Thinking…"):
-                            result = answer_question(
-                                client,
-                                st.session_state.conn,
-                                st.session_state.schema_profiles,
-                                cleaned or prompt,
-                                history,
-                            )
-                        ai_msg = {"role": "ai", "text": result["answer_text"]}
-                        if result.get("chart_data"):
-                            chart = result["chart_data"]
-                            chart["id"] = uuid.uuid4().hex[:10]
-                            ai_msg["chart"] = chart
-                        st.session_state.messages.append(ai_msg)
-                    except Exception as exc:
-                        st.session_state.messages.append(
-                            {"role": "ai", "text": f"Sorry, something went wrong: {exc}"}
+                st.session_state.messages.append({"role": "user", "text": prompt})
+                try:
+                    client = get_client()
+                    history = [
+                        {
+                            "role": m["role"],
+                            "text": m["text"],
+                            "sql": m.get("sql"),
+                            "chart_title": (m.get("chart") or {}).get("title"),
+                        }
+                        for m in st.session_state.messages[:-1]
+                    ]
+                    with st.spinner("Thinking…"):
+                        result = answer_question(
+                            client,
+                            st.session_state.conn,
+                            st.session_state.schema_profiles,
+                            prompt,
+                            history,
+                            dashboard_insights=st.session_state.insights,
                         )
+                    if result.get("remove_insight_ids"):
+                        _remove_insights_from_dashboard(result["remove_insight_ids"])
+                    ai_msg = {"role": "ai", "text": result["answer_text"]}
+                    if result.get("sql"):
+                        ai_msg["sql"] = result["sql"]
+                    if result.get("chart_data"):
+                        chart = result["chart_data"]
+                        chart["id"] = uuid.uuid4().hex[:10]
+                        ai_msg["chart"] = chart
+                    st.session_state.messages.append(ai_msg)
+                except Exception as exc:
+                    st.session_state.messages.append(
+                        {"role": "ai", "text": f"Sorry, something went wrong: {exc}"}
+                    )
             st.rerun()
 
 
