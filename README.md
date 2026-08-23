@@ -17,7 +17,7 @@ Upload your spreadsheets and get an AI-generated dashboard plus a chat assistant
 
 ## Chat
 
-Use the chat panel in the sidebar to ask questions about your data, for example:
+Use the chat panel in the sidebar to ask questions **about your uploaded data**, for example:
 
 - *"What was total revenue last quarter?"*
 - *"Show sign-ups by region as a bar chart"*
@@ -28,4 +28,5 @@ If the assistant returns a chart, click **➕ Add to dashboard** to pin it to th
 
 - You can upload multiple files at once. Excel files with multiple sheets are supported.
 - If a file has issues (empty rows, duplicate columns), a warning badge appears next to the file name — the app will still try to use the data.
-- Keep questions specific for the best answers.
+- Keep questions specific and focused on your uploaded tables for the best answers.
+- General or off-topic questions (e.g. coding help, news, chit-chat) are not supported.

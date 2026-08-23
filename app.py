@@ -21,7 +21,7 @@ from data_layer import (
     parse_upload,
     register_table,
 )
-from llm import answer_question, get_client, suggest_insights
+from llm import answer_question, get_client, sanitize_chat_input, suggest_insights
 
 load_dotenv()
 
@@ -241,28 +241,32 @@ def _render_sidebar() -> None:
                     {"role": "ai", "text": "Please upload a CSV or Excel file first."}
                 )
             else:
-                st.session_state.messages.append({"role": "user", "text": prompt})
-                try:
-                    client = get_client()
-                    history = [(m["role"], m["text"]) for m in st.session_state.messages[:-1]]
-                    with st.spinner("Thinking…"):
-                        result = answer_question(
-                            client,
-                            st.session_state.conn,
-                            st.session_state.schema_profiles,
-                            prompt,
-                            history,
+                cleaned, input_error = sanitize_chat_input(prompt)
+                st.session_state.messages.append({"role": "user", "text": cleaned or prompt})
+                if input_error:
+                    st.session_state.messages.append({"role": "ai", "text": input_error})
+                else:
+                    try:
+                        client = get_client()
+                        history = [(m["role"], m["text"]) for m in st.session_state.messages[:-1]]
+                        with st.spinner("Thinking…"):
+                            result = answer_question(
+                                client,
+                                st.session_state.conn,
+                                st.session_state.schema_profiles,
+                                cleaned or prompt,
+                                history,
+                            )
+                        ai_msg = {"role": "ai", "text": result["answer_text"]}
+                        if result.get("chart_data"):
+                            chart = result["chart_data"]
+                            chart["id"] = uuid.uuid4().hex[:10]
+                            ai_msg["chart"] = chart
+                        st.session_state.messages.append(ai_msg)
+                    except Exception as exc:
+                        st.session_state.messages.append(
+                            {"role": "ai", "text": f"Sorry, something went wrong: {exc}"}
                         )
-                    ai_msg = {"role": "ai", "text": result["answer_text"]}
-                    if result.get("chart_data"):
-                        chart = result["chart_data"]
-                        chart["id"] = uuid.uuid4().hex[:10]
-                        ai_msg["chart"] = chart
-                    st.session_state.messages.append(ai_msg)
-                except Exception as exc:
-                    st.session_state.messages.append(
-                        {"role": "ai", "text": f"Sorry, something went wrong: {exc}"}
-                    )
             st.rerun()
 
 
