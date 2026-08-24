@@ -43,10 +43,10 @@ You are analyzing uploaded data to build a dashboard. Given the schema profiles 
 generate insights following this priority order — only skip a category if the data
 genuinely doesn't support it:
 
-1. TOTAL/AVERAGE (kpi) — one clear aggregate metric, the single most important number
+1. TOTAL/AVERAGE (kpi) — one or two clear aggregate metric, the single most important number
    in this dataset (e.g. total revenue, average order value)
 2. TREND (line) — if any date/time column exists, one insight showing change over time
-3. COMPARISON (bar or grouped_bar) — one insight comparing a numeric measure across
+3. COMPARISON (bar or grouped_bar) — one or two insight comparing a numeric measure across
    the most meaningful categorical column
 4. COMPOSITION (pie) — if a categorical column has 2-6 distinct values, show its share
    of a relevant total
