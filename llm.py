@@ -43,10 +43,10 @@ You are analyzing uploaded data to build a dashboard. Given the schema profiles 
 generate insights following this priority order — only skip a category if the data
 genuinely doesn't support it:
 
-1. TOTAL/AVERAGE (kpi) — one or two clear aggregate metric, the single most important number
+1. TOTAL/AVERAGE (kpi) — one clear aggregate metric, the single most important number
    in this dataset (e.g. total revenue, average order value)
 2. TREND (line) — if any date/time column exists, one insight showing change over time
-3. COMPARISON (bar or grouped_bar) — one or two insight comparing a numeric measure across
+3. COMPARISON (bar or grouped_bar) — one insight comparing a numeric measure across
    the most meaningful categorical column
 4. COMPOSITION (pie) — if a categorical column has 2-6 distinct values, show its share
    of a relevant total
@@ -56,18 +56,21 @@ genuinely doesn't support it:
 
 Generate at most two insights per category, skip a category only if truly not
 applicable, and order the output list in the priority order above.
+Aim for 4-6 total insights when the data supports it — do not stop after a single KPI.
 
-Return ONLY a JSON array of: {"title", "chart_type", "sql", "x", "y", "groupby"}
+Return ONLY a JSON array of objects: {"title", "chart_type", "sql", "x", "y", "groupby"}
 chart_type must be one of: bar, line, pie, grouped_bar, scatter, kpi, table
 
 Return compact, valid JSON only — no markdown fences, no commentary.
 In sql strings, escape double quotes as \\" and keep each SQL query on a single line.
 
 sql must be DuckDB-compatible SELECT-only queries referencing exact table and column names.
+Always double-quote table and column identifiers that contain spaces or special characters,
+e.g. SELECT "Order Date", SUM("Total Sales") FROM "sales_data".
 Use WITH (CTE) clauses when needed for top-N or multi-step logic.
 For kpi charts, sql should return a single row with columns: value and optional label.
-For pie charts, sql should return label and value columns.
-Use x and y for axis column names; groupby for grouped_bar color/series column.
+For pie charts, sql should return label and value columns; set x to the label column and y to the value column.
+Use x and y for axis column names on bar/line/scatter; groupby for grouped_bar color/series column.
 """
 
 ANSWER_SYSTEM_PROMPT = """
@@ -131,6 +134,12 @@ FOLLOWUP_SIGNALS = (
     "can you", "please retry", "retry", "update", "change it",
 )
 
+def _strip_quoted_sql_fragments(sql: str) -> str:
+    """Remove quoted strings/identifiers so keyword guards ignore column names."""
+    without_single = re.sub(r"'(?:''|[^'])*'", "''", sql)
+    return re.sub(r'"(?:""|[^"])*"', '""', without_single)
+
+
 def is_select_only(sql: str) -> bool:
     stripped = re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL).strip()
@@ -139,11 +148,12 @@ def is_select_only(sql: str) -> bool:
     first = stripped.split(";")[0].strip()
     if not re.match(r"^(SELECT|WITH)\b", first, re.IGNORECASE):
         return False
+    check_target = _strip_quoted_sql_fragments(first)
     forbidden = re.compile(
         r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY|ATTACH|DETACH|PRAGMA)\b",
         re.IGNORECASE,
     )
-    return forbidden.search(first) is None
+    return forbidden.search(check_target) is None
 
 
 def _tool_result_from_df(df: pd.DataFrame, max_rows: int = MAX_QUERY_TOOL_ROWS) -> dict[str, Any]:
@@ -242,7 +252,7 @@ def _answer_from_tool_results(
         default=str,
     )
     try:
-        payload = _call_llm_json(client, SUMMARIZE_RESULTS_PROMPT.strip(), user)
+        payload = _coerce_dict_payload(_call_llm_json(client, SUMMARIZE_RESULTS_PROMPT.strip(), user))
         return str(payload.get("answer_text") or "").strip() or _summarize_tool_result(tool_result, question)
     except ValueError:
         return _summarize_tool_result(tool_result, question)
@@ -259,7 +269,7 @@ def _answer_from_schema(client: OpenAI, question: str, schema_profiles: list[dic
         'Return ONLY valid JSON: {"answer_text": "..."}'
     )
     try:
-        payload = _call_llm_json(client, system, user)
+        payload = _coerce_dict_payload(_call_llm_json(client, system, user))
         return str(payload.get("answer_text", "I couldn't answer from the schema."))
     except ValueError:
         return "I couldn't answer from the schema."
@@ -481,6 +491,35 @@ def _normalize_insight(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _coerce_dict_payload(raw: Any) -> dict[str, Any]:
+    """Normalize LLM JSON that should be an object but may arrive as a one-item list."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list):
+        dict_items = [item for item in raw if isinstance(item, dict)]
+        if len(dict_items) == 1:
+            return dict_items[0]
+        if dict_items:
+            return {"items": dict_items}
+    return {}
+
+
+def _coerce_insight_items(raw: Any) -> list[dict[str, Any]]:
+    """Normalize LLM JSON that should be an insight array."""
+    if isinstance(raw, dict):
+        raw = raw.get("insights", raw.get("items", [raw]))
+    if not isinstance(raw, list):
+        raise ValueError("LLM did not return a JSON array of insights")
+
+    items: list[dict[str, Any]] = []
+    for entry in raw:
+        if isinstance(entry, dict):
+            items.append(entry)
+        elif isinstance(entry, list):
+            items.extend(item for item in entry if isinstance(item, dict))
+    return items
+
+
 def suggest_insights(
     client: OpenAI,
     conn,
@@ -496,14 +535,17 @@ def suggest_insights(
             f"Schema profiles:\n{_schema_context(schema_profiles)}\n\n"
             f"These dashboard titles are already shown — do NOT repeat them: {exclude}\n"
             "Generate additional insights for any remaining applicable categories from the "
-            f"priority list that are not yet covered. Return at most {count} new insights."
+            f"priority list that are not yet covered. Return up to {count} new insights."
         )
     else:
-        user = f"Schema profiles:\n{_schema_context(schema_profiles)}"
-    items = _call_llm_json(client, system, user)
-    if isinstance(items, dict):
-        items = items.get("insights", items.get("items", [items]))
-    if not isinstance(items, list):
+        user = (
+            f"Schema profiles:\n{_schema_context(schema_profiles)}\n\n"
+            f"Return a JSON array of {count} insights covering every applicable category "
+            "from the priority list (KPI, trend, comparison, composition, cross-file). "
+            "Include at least one non-KPI chart when the schema supports it."
+        )
+    items = _coerce_insight_items(_call_llm_json(client, system, user))
+    if not items:
         raise ValueError("LLM did not return a JSON array of insights")
 
     results: list[dict[str, Any]] = []
@@ -512,7 +554,7 @@ def suggest_insights(
         if not insight["sql"]:
             continue
         df, err = execute_sql_with_retry(client, conn, schema_profiles, insight["sql"])
-        if err:
+        if err or df is None or df.empty:
             continue
         insight["data"] = df
         results.append(insight)
@@ -560,7 +602,7 @@ def answer_question(
             "or a dashboard/chart request. If not, return relevant=false."
         )
     try:
-        payload = _call_llm_json(client, ANSWER_SYSTEM_PROMPT.strip(), user)
+        payload = _coerce_dict_payload(_call_llm_json(client, ANSWER_SYSTEM_PROMPT.strip(), user))
     except ValueError:
         return {
             "sql": "",
@@ -602,13 +644,15 @@ def answer_question(
                 "Write a revised SELECT-only DuckDB SQL query that fixes the prior answer."
             )
             try:
-                revised = _call_llm_json(
-                    client,
-                    (
-                        "Revise the previous SQL based on the user's correction. "
-                        'Return ONLY valid JSON: {"sql": "...", "chart_spec": null or {...}}'
-                    ),
-                    revise_user,
+                revised = _coerce_dict_payload(
+                    _call_llm_json(
+                        client,
+                        (
+                            "Revise the previous SQL based on the user's correction. "
+                            'Return ONLY valid JSON: {"sql": "...", "chart_spec": null or {...}}'
+                        ),
+                        revise_user,
+                    )
                 )
                 sql = str(revised.get("sql") or "").strip()
                 if not chart_spec and isinstance(revised.get("chart_spec"), dict):
